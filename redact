@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Launcher: runs redact_pdf.py with the project's own .venv, from any folder,
+# without needing to activate anything. Works through a symlink (setup.sh --link).
+set -euo pipefail
+SRC="${BASH_SOURCE[0]}"
+while [[ -L "$SRC" ]]; do
+  DIR="$(cd -P "$(dirname "$SRC")" && pwd)"
+  SRC="$(readlink "$SRC")"
+  [[ "$SRC" != /* ]] && SRC="$DIR/$SRC"
+done
+ROOT="$(cd -P "$(dirname "$SRC")" && pwd)"
+
+if [[ ! -x "$ROOT/.venv/bin/python" ]]; then
+  echo "redact-pdf is not set up yet. Run: $ROOT/setup.sh" >&2
+  exit 1
+fi
+# -W ignore hides library deprecation noise; real errors still print.
+exec "$ROOT/.venv/bin/python" -W ignore "$ROOT/redact_pdf.py" "$@"

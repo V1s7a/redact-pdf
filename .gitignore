@@ -1,0 +1,19 @@
+# Never commit documents or redaction output. This repo holds code only.
+*.pdf
+*.PDF
+*.png
+*.jpg
+*.jpeg
+*.tif
+*.tiff
+*.docx
+report*.json
+deny*.txt
+allow*.txt
+names*.txt
+
+# Environment
+.venv/
+__pycache__/
+*.pyc
+.DS_Store

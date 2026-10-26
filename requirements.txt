@@ -1,0 +1,12 @@
+# redact-pdf dependencies
+# Python 3.10 to 3.13. Python 3.14+ is not supported yet: spaCy and numpy
+# have no prebuilt wheels for it and fail to compile on macOS.
+
+pymupdf>=1.24,<3          # PDF parsing, true redaction, scrub, flatten
+presidio-analyzer>=2.2,<3 # PII/PHI detection engine
+spacy>=3.8,<3.9           # NER backend for Presidio
+pytesseract>=0.3.10       # OCR wrapper (needs the tesseract program: brew install tesseract)
+Pillow>=10                # image handling for OCR
+
+# spaCy English model, pinned to match spaCy 3.8 (about 400 MB download)
+en_core_web_lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl
