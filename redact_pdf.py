@@ -116,8 +116,25 @@ LABEL_RE = re.compile(
 )
 
 OCR_DPI = 300
-PAD = 1.0      # vertical padding (points) for boxes over real text
-OCR_PAD = 2.0  # padding on all sides for boxes over scanned images
+TEXT_INSET = 0.2   # shrink boxes over real text by 20% of line height, top and bottom
+OCR_PAD = (2.0, 1.0)  # (horizontal, vertical) padding for boxes over scanned images
+
+
+def box_for(r: pymupdf.Rect, src: str) -> pymupdf.Rect:
+    """Redaction box for one word or line span.
+
+    Real text: PyMuPDF deletes every glyph a box touches, and a word's box spans
+    the full line height, which overlaps the lines above and below on tightly
+    spaced records. Shrinking the box vertically still touches every glyph on the
+    target line (so they are all deleted) without touching neighboring lines.
+
+    Scanned images: only pixels inside the box are blanked and OCR boxes are
+    approximate, so pad them instead.
+    """
+    if src == "text":
+        dy = r.height * TEXT_INSET
+        return pymupdf.Rect(r.x0, r.y0 + dy, r.x1, r.y1 - dy)
+    return r + (-OCR_PAD[0], -OCR_PAD[1], OCR_PAD[0], OCR_PAD[1])
 
 # Ages under 90 are not Safe Harbor identifiers, so "64 year old" is kept.
 AGE_RE = re.compile(r"^\s*(\d{1,3})[\s-]*(?:y/?o|yo|years?[\s-]*old|year-old|yrs?)\s*$", re.I)
@@ -264,6 +281,27 @@ class Hit:
     value: str
 
 
+CHUNK = 100_000  # spaCy refuses text over 1M characters and needs ~1 GB RAM per 100k
+
+
+def analyze(analyzer: AnalyzerEngine, text: str, entities: list[str], threshold: float):
+    """Run Presidio over text of any length by splitting it at line breaks into
+    chunks spaCy can handle, then shifting results back to whole-text offsets."""
+    start = 0
+    while start < len(text):
+        end = min(start + CHUNK, len(text))
+        if end < len(text):
+            nl = text.rfind("\n", start, end)
+            if nl > start:
+                end = nl + 1
+        for r in analyzer.analyze(text=text[start:end], language="en",
+                                  entities=entities, score_threshold=threshold):
+            r.start += start
+            r.end += start
+            yield r
+        start = end
+
+
 def detect(pt: PageText, analyzer: AnalyzerEngine, entities: list[str],
            threshold: float, deny: list[str], allow: set[str]) -> list[Hit]:
     hits: list[Hit] = []
@@ -271,7 +309,7 @@ def detect(pt: PageText, analyzer: AnalyzerEngine, entities: list[str],
     if not text.strip():
         return hits
 
-    for r in analyzer.analyze(text=text, language="en", entities=entities, score_threshold=threshold):
+    for r in analyze(analyzer, text, entities, threshold):
         val = text[r.start:r.end]
         if val.strip().lower() in allow:
             continue
@@ -337,15 +375,12 @@ def redact(args: argparse.Namespace) -> int:
 
         counts: Counter = Counter()
         for src, pt in sources:
-            # Text glyphs are removed whole if touched, so native boxes need no side
-            # padding. OCR boxes are approximate pixels, so pad them generously.
-            pad = (0, PAD) if src == "text" else (OCR_PAD, OCR_PAD)
             for h in detect(pt, analyzer, entities, args.threshold, deny, allow):
                 counts[h.entity] += 1
                 secret_values.add(h.value.strip())
                 for r in pt.rects_for_span(h.start, h.end):
                     if not args.dry_run:
-                        page.add_redact_annot(r + (-pad[0], -pad[1], pad[0], pad[1]), fill=(0, 0, 0))
+                        page.add_redact_annot(box_for(r, src), fill=(0, 0, 0))
 
         if not args.dry_run:
             page.apply_redactions(
@@ -416,8 +451,7 @@ def verify(path: str, analyzer: AnalyzerEngine, entities: list[str], threshold: 
         if HAVE_OCR and ocr_mode != "off" and (ocr_mode == "all" or looks_scanned(page)):
             text += "\n" + ocr_text(page).text
         leaked |= {s for s in checks if s in text}
-        for r in analyzer.analyze(text=text, language="en", entities=entities,
-                                  score_threshold=max(threshold, 0.6)):
+        for r in analyze(analyzer, text, entities, max(threshold, 0.6)):
             val = text[r.start:r.end].strip()
             age = AGE_RE.match(val)
             if val.lower() in allow or (r.entity_type == "DATE_TIME" and age and int(age.group(1)) < 90):
